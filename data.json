@@ -210,7 +210,7 @@
       "longitude": 101.43198349999999,
       "id": 10,
       "visited_at": "2026-01-20T18:41:02.475Z",
-      "duration_seconds": 0
+      "duration_seconds": 16398
     },
     {
       "link_id": "67b71d49",
@@ -255,7 +255,29 @@
       "id": 12,
       "visited_at": "2026-01-20T18:43:44.983Z",
       "duration_seconds": 0
+    },
+    {
+      "link_id": "67b71d49",
+      "visitor_name": "uil",
+      "visitor_email": "uli",
+      "ip_address": "::1",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+      "device_type": "Desktop",
+      "browser": "Chrome",
+      "os": "Windows",
+      "screen_width": 1536,
+      "screen_height": 960,
+      "language": "en-US",
+      "referrer": "Direct",
+      "city": "Pekanbaru",
+      "country": "Indonesia",
+      "isp": "Unknown",
+      "latitude": 0.5144214128509234,
+      "longitude": 101.43197570605015,
+      "id": 13,
+      "visited_at": "2026-01-20T23:11:36.852Z",
+      "duration_seconds": 166
     }
   ],
-  "nextVisitId": 13
+  "nextVisitId": 14
 }

