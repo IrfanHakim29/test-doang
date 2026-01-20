@@ -6,11 +6,12 @@ export async function POST(request: NextRequest) {
     const data = await request.json()
     
     if (data.visitId && data.duration) {
-      updateVisitDuration(data.visitId, data.duration)
+      await updateVisitDuration(data.visitId, data.duration)
     }
 
     return NextResponse.json({ success: true })
   } catch (error) {
+    console.error('Duration update error:', error)
     return NextResponse.json({ error: 'Failed' }, { status: 500 })
   }
 }

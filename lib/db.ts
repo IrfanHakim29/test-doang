@@ -1,130 +1,128 @@
-import fs from 'fs'
-import path from 'path'
+import { supabase, Link, Visit } from './supabase'
 
-const dbPath = path.join(process.cwd(), 'data.json')
+export type { Link, Visit }
 
-export interface Link {
-  id: string
-  label: string
-  created_at: string
-}
+// ============ LINKS ============
 
-export interface Visit {
-  id: number
-  link_id: string
-  visitor_name: string
-  visitor_email: string
-  ip_address: string
-  user_agent: string
-  device_type: string
-  browser: string
-  os: string
-  screen_width: number
-  screen_height: number
-  language: string
-  referrer: string
-  city: string
-  country: string
-  isp: string
-  latitude: number | null
-  longitude: number | null
-  visited_at: string
-  duration_seconds: number
-}
-
-interface Database {
-  links: Link[]
-  visits: Visit[]
-  nextVisitId: number
-}
-
-function getDb(): Database {
-  try {
-    if (fs.existsSync(dbPath)) {
-      const data = fs.readFileSync(dbPath, 'utf-8')
-      return JSON.parse(data)
-    }
-  } catch (error) {
-    console.error('Error reading database:', error)
+export async function createLink(id: string, label: string): Promise<Link | null> {
+  const { data, error } = await supabase
+    .from('links')
+    .insert({ id, label })
+    .select()
+    .single()
+  
+  if (error) {
+    console.error('Error creating link:', error)
+    return null
   }
-  return { links: [], visits: [], nextVisitId: 1 }
+  return data
 }
 
-function saveDb(db: Database): void {
-  try {
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2))
-  } catch (error) {
-    console.error('Error saving database:', error)
+export async function getLink(id: string): Promise<Link | null> {
+  const { data, error } = await supabase
+    .from('links')
+    .select('*')
+    .eq('id', id)
+    .single()
+  
+  if (error) {
+    console.error('Error getting link:', error)
+    return null
   }
+  return data
 }
 
-export function createLink(id: string, label: string): Link {
-  const db = getDb()
-  const link: Link = {
-    id,
-    label,
-    created_at: new Date().toISOString()
+export async function getAllLinks(): Promise<Link[]> {
+  const { data, error } = await supabase
+    .from('links')
+    .select('*')
+    .order('created_at', { ascending: false })
+  
+  if (error) {
+    console.error('Error getting all links:', error)
+    return []
   }
-  db.links.push(link)
-  saveDb(db)
-  return link
+  return data || []
 }
 
-export function getLink(id: string): Link | undefined {
-  const db = getDb()
-  return db.links.find(l => l.id === id)
-}
-
-export function getAllLinks(): Link[] {
-  const db = getDb()
-  return db.links.sort((a, b) => 
-    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  )
-}
-
-export function deleteLink(id: string): void {
-  const db = getDb()
-  db.links = db.links.filter(l => l.id !== id)
-  db.visits = db.visits.filter(v => v.link_id !== id)
-  saveDb(db)
-}
-
-export function recordVisit(data: Omit<Visit, 'id' | 'visited_at' | 'duration_seconds'>): number {
-  const db = getDb()
-  const visit: Visit = {
-    ...data,
-    id: db.nextVisitId,
-    visited_at: new Date().toISOString(),
-    duration_seconds: 0
+export async function deleteLink(id: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('links')
+    .delete()
+    .eq('id', id)
+  
+  if (error) {
+    console.error('Error deleting link:', error)
+    return false
   }
-  db.visits.push(visit)
-  db.nextVisitId++
-  saveDb(db)
-  return visit.id
+  return true
 }
 
-export function updateVisitDuration(visitId: number, duration: number): void {
-  const db = getDb()
-  const visit = db.visits.find(v => v.id === visitId)
-  if (visit) {
-    visit.duration_seconds = duration
-    saveDb(db)
-  }
-}
+// ============ VISITS ============
 
-export function getVisitsByLink(linkId: string): Visit[] {
-  const db = getDb()
-  return db.visits
-    .filter(v => v.link_id === linkId)
-    .sort((a, b) => new Date(b.visited_at).getTime() - new Date(a.visited_at).getTime())
-}
-
-export function getAllVisits(): (Visit & { label: string })[] {
-  const db = getDb()
-  return db.visits
-    .map(v => {
-      const link = db.links.find(l => l.id === v.link_id)
-      return { ...v, label: link?.label || v.link_id }
+export async function recordVisit(data: Omit<Visit, 'id' | 'visited_at' | 'duration_seconds'>): Promise<number | null> {
+  const { data: visit, error } = await supabase
+    .from('visits')
+    .insert({
+      ...data,
+      duration_seconds: 0
     })
-    .sort((a, b) => new Date(b.visited_at).getTime() - new Date(a.visited_at).getTime())
+    .select('id')
+    .single()
+  
+  if (error) {
+    console.error('Error recording visit:', error)
+    return null
+  }
+  return visit?.id || null
+}
+
+export async function updateVisitDuration(visitId: number, duration: number): Promise<void> {
+  const { error } = await supabase
+    .from('visits')
+    .update({ duration_seconds: duration })
+    .eq('id', visitId)
+  
+  if (error) {
+    console.error('Error updating visit duration:', error)
+  }
+}
+
+export async function getVisitsByLink(linkId: string): Promise<Visit[]> {
+  const { data, error } = await supabase
+    .from('visits')
+    .select('*')
+    .eq('link_id', linkId)
+    .order('visited_at', { ascending: false })
+  
+  if (error) {
+    console.error('Error getting visits by link:', error)
+    return []
+  }
+  return data || []
+}
+
+export async function getAllVisits(): Promise<(Visit & { label: string })[]> {
+  // Get all visits with link info
+  const { data: visits, error: visitsError } = await supabase
+    .from('visits')
+    .select('*')
+    .order('visited_at', { ascending: false })
+  
+  if (visitsError) {
+    console.error('Error getting all visits:', visitsError)
+    return []
+  }
+
+  // Get all links to map labels
+  const { data: links } = await supabase
+    .from('links')
+    .select('id, label')
+  
+  const linkMap = new Map(links?.map(l => [l.id, l.label]) || [])
+  
+  return (visits || []).map(v => ({
+    ...v,
+    label: linkMap.get(v.link_id) || v.link_id
+  }))
 }

@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
     const data = await request.json()
     
     // Check if link exists
-    const link = getLink(data.link_id)
+    const link = await getLink(data.link_id)
     if (!link) {
       return NextResponse.json({ error: 'Link not found' }, { status: 404 })
     }
@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const visitId = recordVisit({
+    const visitId = await recordVisit({
       link_id: data.link_id,
       visitor_name: data.visitor_name || 'Anonymous',
       visitor_email: data.visitor_email || '',

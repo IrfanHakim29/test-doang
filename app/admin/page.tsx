@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { supabase } from '@/lib/supabase'
 
 interface Link {
   id: string
@@ -43,12 +44,77 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true)
   const [selectedLink, setSelectedLink] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
 
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
 
   useEffect(() => {
     fetchLinks()
     fetchLogs()
+
+    // Setup realtime subscription for visits
+    const channel = supabase
+      .channel('visits-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'visits'
+        },
+        async (payload) => {
+          console.log('🔔 New visit realtime:', payload.new)
+          
+          // Get the link label for this visit
+          const newVisit = payload.new as Visit
+          const { data: linkData } = await supabase
+            .from('links')
+            .select('label')
+            .eq('id', newVisit.link_id)
+            .single()
+          
+          const visitWithLabel = {
+            ...newVisit,
+            label: linkData?.label || newVisit.link_id
+          }
+          
+          // Add to visits list (prepend for newest first)
+          setVisits(prev => [visitWithLabel, ...prev])
+          
+          // Also refresh links to update visit counts
+          fetchLinks()
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'visits'
+        },
+        (payload) => {
+          console.log('🔄 Visit updated realtime:', payload.new)
+          // Update the visit in the list (for duration updates)
+          setVisits(prev => prev.map(v => 
+            v.id === (payload.new as Visit).id 
+              ? { ...v, ...payload.new as Visit }
+              : v
+          ))
+        }
+      )
+      .subscribe((status) => {
+        console.log('Realtime status:', status)
+        if (status === 'SUBSCRIBED') {
+          setRealtimeStatus('connected')
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+          setRealtimeStatus('disconnected')
+        }
+      })
+
+    // Cleanup subscription on unmount
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   const fetchLinks = async () => {
@@ -139,7 +205,31 @@ export default function AdminPage() {
   return (
     <div className="admin-container">
       <header className="admin-header">
-        <h1 className="admin-title">🎯 Link Tracker</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <h1 className="admin-title">🎯 Link Tracker</h1>
+          <span style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '0.5rem',
+            fontSize: '0.8rem',
+            padding: '0.25rem 0.75rem',
+            borderRadius: '1rem',
+            background: realtimeStatus === 'connected' ? 'rgba(34, 197, 94, 0.2)' : 
+                        realtimeStatus === 'connecting' ? 'rgba(234, 179, 8, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+            color: realtimeStatus === 'connected' ? '#22c55e' : 
+                   realtimeStatus === 'connecting' ? '#eab308' : '#ef4444'
+          }}>
+            <span style={{ 
+              width: '8px', 
+              height: '8px', 
+              borderRadius: '50%', 
+              background: 'currentColor',
+              animation: realtimeStatus === 'connected' ? 'pulse 2s infinite' : 'none'
+            }}></span>
+            {realtimeStatus === 'connected' ? 'Live' : 
+             realtimeStatus === 'connecting' ? 'Connecting...' : 'Offline'}
+          </span>
+        </div>
         <button className="btn btn-primary" onClick={() => setShowModal(true)}>
           + Buat Link Baru
         </button>

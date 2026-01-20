@@ -7,13 +7,14 @@ export async function GET(request: NextRequest) {
     const linkId = searchParams.get('linkId')
     
     if (linkId) {
-      const visits = getVisitsByLink(linkId)
+      const visits = await getVisitsByLink(linkId)
       return NextResponse.json(visits)
     }
     
-    const visits = getAllVisits()
+    const visits = await getAllVisits()
     return NextResponse.json(visits)
   } catch (error) {
+    console.error('GET /api/logs error:', error)
     return NextResponse.json({ error: 'Failed to fetch logs' }, { status: 500 })
   }
 }
